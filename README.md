@@ -6,7 +6,7 @@ Web app Next.js per creare video MP4 automatici con AI Vision, storytelling, Bra
 
 1. Crea un progetto su Vercel e collega questo repository.
 2. Imposta runtime Node.js standard di Next.js.
-3. Aggiungi uno store Vercel Blob per asset persistenti.
+3. In Vercel vai su `Storage` -> `Blob` -> `Connect to Project` e collega uno store Blob al progetto.
 4. Configura le variabili ambiente sotto.
 5. Esegui deploy.
 
@@ -15,9 +15,8 @@ Web app Next.js per creare video MP4 automatici con AI Vision, storytelling, Bra
 ```bash
 NEXT_PUBLIC_APP_URL=https://tuo-dominio.vercel.app
 NODE_ENV=production
-OPENAI_API_KEY=sk-...
-GOOGLE_PLACES_API_KEY=...
-BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...
+OPENAI_API_KEY=your_openai_api_key_here
+GOOGLE_PLACES_API_KEY=your_google_places_api_key_here
 STORYMOTION_RENDER_MAX_IMAGES=60
 STORYMOTION_ENABLE_CLIENT_API_KEYS=true
 ```
@@ -26,7 +25,18 @@ Le API key possono anche essere salvate da `/settings` per dispositivo. Per prod
 
 ## Storage Persistente
 
-Lo storage persistente usa Vercel Blob tramite `BLOB_READ_WRITE_TOKEN`.
+Lo storage persistente usa Vercel Blob tramite integrazione managed/OIDC.
+
+Su Vercel non serve configurare un token read/write manuale. Collega lo store da:
+
+`Storage` -> `Blob` -> `Connect to Project`
+
+Vercel configura automaticamente le variabili managed necessarie, tra cui:
+
+- `BLOB_STORE_ID`
+- `BLOB_WEBHOOK_PUBLIC_KEY`
+
+Il codice chiama `@vercel/blob` senza passare token manuali. In locale, dove OIDC non e disponibile, gli asset vengono salvati in `.local-blob-storage` e serviti da `/api/storage/local/...`.
 
 Da salvare in Blob:
 - progetti
@@ -37,7 +47,7 @@ Da salvare in Blob:
 - video generati
 - impostazioni utente sincronizzate
 
-Senza `BLOB_READ_WRITE_TOKEN`, l’app mostra errore chiaro sulle API di storage e mantiene solo persistenza browser locale.
+Se Blob non e collegato al progetto Vercel, l’app mostra un errore chiaro: collegare Blob da `Storage` -> `Blob` -> `Connect to Project`.
 
 ## Rendering MP4
 

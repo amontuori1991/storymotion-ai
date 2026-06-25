@@ -9,3 +9,4 @@ dist
 *.webm
 tmp
 tsconfig.tsbuildinfo
+.local-blob-storage
