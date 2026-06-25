@@ -1,0 +1,11 @@
+.next
+node_modules
+out
+dist
+.env
+.env*.local
+*.mp4
+*.mov
+*.webm
+tmp
+tsconfig.tsbuildinfo
