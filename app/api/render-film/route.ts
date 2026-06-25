@@ -279,6 +279,19 @@ const PLACEHOLDER_DATA_URL =
 
 async function fetchImageAsDataUrl(url: string): Promise<string> {
   if (url.startsWith('data:')) return url;
+
+  // Percorsi dello storage locale (relativi o assoluti con host arbitrario):
+  // leggi direttamente dal filesystem per evitare roundtrip HTTP e problemi di porta.
+  const localMatch = url.match(/\/api\/storage\/local\/([^/?#\s]+)/);
+  if (localMatch) {
+    const safeName = path.basename(localMatch[1]);
+    const filepath = path.join(process.cwd(), '.local-blob-storage', safeName);
+    const buffer = await readFile(filepath);
+    const ext = path.extname(safeName).toLowerCase();
+    const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    return `data:${mime};base64,${buffer.toString('base64')}`;
+  }
+
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
   const mimeType = (res.headers.get('content-type') ?? 'image/jpeg').split(';')[0].trim();

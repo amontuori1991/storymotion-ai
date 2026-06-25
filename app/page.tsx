@@ -688,15 +688,50 @@ export default function Home() {
               if (eventData.progress !== undefined) setRenderProgress(eventData.progress);
               if (eventData.message) setRenderPhaseMessage(eventData.message);
             } else if (eventType === 'done') {
+              // Normalizza l'URL ricevuto:
+              // - URL assoluto https:// (Vercel Blob): usato direttamente
+              // - URL relativo /api/...: risolto contro l'origin corrente del browser
+              // - URL localhost con porta diversa: normalizzato all'origin corrente
+              const rawUrl = eventData.url ?? '';
+              const resolvedFilename = eventData.filename ?? `${filename || 'storymotion-ai'}.mp4`;
+              let resolvedUrl = rawUrl;
+              try {
+                if (rawUrl.startsWith('data:') || rawUrl.startsWith('blob:')) {
+                  resolvedUrl = rawUrl;
+                } else if (rawUrl.startsWith('/')) {
+                  resolvedUrl = new URL(rawUrl, window.location.origin).toString();
+                } else if (rawUrl.startsWith('http')) {
+                  const parsed = new URL(rawUrl);
+                  resolvedUrl =
+                    parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'
+                      ? new URL(parsed.pathname + parsed.search, window.location.origin).toString()
+                      : rawUrl;
+                }
+              } catch {
+                resolvedUrl = rawUrl;
+              }
+              console.log('[StoryMotion] done event', { rawUrl, resolvedUrl, filename: resolvedFilename });
+
               setRenderPhaseMessage('Download video...');
               setRenderProgress(98);
-              const videoRes = await fetch(eventData.url!);
-              const videoBlob = await videoRes.blob();
-              if (downloadUrl?.startsWith('blob:')) URL.revokeObjectURL(downloadUrl);
-              setDownloadUrl(URL.createObjectURL(videoBlob));
-              setDownloadName(eventData.filename ?? `${filename || 'storymotion-ai'}.mp4`);
-              setRenderProgress(100);
-              setRenderPhaseMessage('');
+
+              let fetchError: string | null = null;
+              try {
+                const videoRes = await fetch(resolvedUrl);
+                if (!videoRes.ok) throw new Error(`HTTP ${videoRes.status} ${videoRes.statusText}`);
+                const videoBlob = await videoRes.blob();
+                if (downloadUrl?.startsWith('blob:')) URL.revokeObjectURL(downloadUrl);
+                setDownloadUrl(URL.createObjectURL(videoBlob));
+                setDownloadName(resolvedFilename);
+                setRenderProgress(100);
+                setRenderPhaseMessage('');
+              } catch (fetchErr) {
+                fetchError =
+                  `Video generato ma download non riuscito. Apri manualmente: ${resolvedUrl}` +
+                  (fetchErr instanceof Error ? ` (${fetchErr.message})` : '');
+              }
+
+              if (fetchError) throw new Error(fetchError);
               break outer;
             } else if (eventType === 'error') {
               throw new Error(eventData.message ?? 'Rendering fallito');

@@ -8,18 +8,17 @@ function safeAssetName(name: string) {
   return `${crypto.randomUUID()}-${base}${ext}`;
 }
 
-function appUrl() {
-  return process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-}
-
 async function putLocalAsset(name: string, data: Buffer) {
   const filename = safeAssetName(name);
   const dir = path.join(process.cwd(), '.local-blob-storage');
   await mkdir(dir, { recursive: true });
   await writeFile(path.join(dir, filename), data);
 
+  // URL relativo: funziona su qualsiasi porta senza NEXT_PUBLIC_APP_URL hardcoded.
+  // Il client usa window.location.origin per costruire l'URL assoluto;
+  // il server usa il filesystem diretto (fetchImageAsDataUrl lo rileva dal pattern).
   return {
-    url: `${appUrl().replace(/\/$/, '')}/api/storage/local/${filename}`,
+    url: `/api/storage/local/${filename}`,
     persistent: true,
     provider: 'local' as const,
     message: 'Asset salvato nello storage locale di sviluppo.'
