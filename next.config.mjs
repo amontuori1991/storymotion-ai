@@ -11,9 +11,8 @@ const nextConfig = {
       './node_modules/@ffmpeg-installer/ffmpeg/package.json',
       './node_modules/@ffmpeg-installer/linux-x64/ffmpeg',
       './node_modules/@ffmpeg-installer/linux-x64/package.json',
-      './node_modules/@sparticuz/chromium/bin/**/*',
-      './node_modules/@sparticuz/chromium/build/**/*',
-      './node_modules/@sparticuz/chromium/package.json'
+      './node_modules/@sparticuz/chromium-min/build/**/*',
+      './node_modules/@sparticuz/chromium-min/package.json'
     ]
   },
   experimental: {

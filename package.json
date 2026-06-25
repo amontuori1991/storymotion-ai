@@ -16,7 +16,7 @@
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@remotion/bundler": "^4.0.482",
     "@remotion/renderer": "^4.0.320",
-    "@sparticuz/chromium": "^147.0.0",
+    "@sparticuz/chromium-min": "^147.0.0",
     "@vercel/blob": "^2.4.1",
     "autoprefixer": "^10.4.21",
     "exifr": "^7.1.3",

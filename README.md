@@ -19,6 +19,7 @@ OPENAI_API_KEY=your_openai_api_key_here
 GOOGLE_PLACES_API_KEY=your_google_places_api_key_here
 STORYMOTION_RENDER_MAX_IMAGES=60
 STORYMOTION_ENABLE_CLIENT_API_KEYS=true
+CHROMIUM_PACK_URL=https://your-storage.example.com/chromium-pack.tar
 ```
 
 Le API key possono anche essere salvate da `/settings` per dispositivo. Per produzione multiutente è preferibile configurarle su Vercel.
@@ -50,6 +51,8 @@ Da salvare in Blob:
 Se Blob non e collegato al progetto Vercel, l’app mostra un errore chiaro: collegare Blob da `Storage` -> `Blob` -> `Connect to Project`.
 
 ## Rendering MP4
+
+In produzione Vercel il renderer usa `@sparticuz/chromium-min`: non includere Chromium completo nel bundle della Function, altrimenti si supera il limite di 250 MB. Carica il file `chromium-pack.tar` della release `@sparticuz/chromium` su uno storage pubblico veloce, per esempio Vercel Blob pubblico o S3, e imposta `CHROMIUM_PACK_URL` con quell'URL.
 
 Il rendering usa:
 - `@remotion/renderer`

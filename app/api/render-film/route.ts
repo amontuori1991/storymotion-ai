@@ -215,9 +215,14 @@ async function createQrCodeDataUrl(url: string | undefined, enabled: boolean) {
 
 async function getServerlessBrowserExecutable() {
   if (!process.env.VERCEL) return null;
-  const chromium = await import('@sparticuz/chromium');
-  const executablePath = await chromium.default.executablePath();
+  const chromiumPackUrl = process.env.CHROMIUM_PACK_URL;
+  if (!chromiumPackUrl) {
+    throw new Error('CHROMIUM_PACK_URL non configurata. Usa @sparticuz/chromium-min con un chromium-pack.tar ospitato su storage pubblico veloce.');
+  }
+  const chromium = await import('@sparticuz/chromium-min');
+  const executablePath = await chromium.default.executablePath(chromiumPackUrl);
   console.info('[StoryMotion render] Browser diagnostics', {
+    chromiumPackUrl,
     executablePath,
     executableExists: existsSync(executablePath)
   });
