@@ -213,6 +213,17 @@ async function createQrCodeDataUrl(url: string | undefined, enabled: boolean) {
   });
 }
 
+async function getServerlessBrowserExecutable() {
+  if (!process.env.VERCEL) return null;
+  const chromium = await import('@sparticuz/chromium');
+  const executablePath = await chromium.default.executablePath();
+  console.info('[StoryMotion render] Browser diagnostics', {
+    executablePath,
+    executableExists: existsSync(executablePath)
+  });
+  return executablePath;
+}
+
 async function getBundle() {
   if (!bundledServeUrl) {
     const { bundle } = await import('@remotion/bundler');
@@ -300,11 +311,19 @@ export async function POST(request: Request) {
   try {
     await mkdir(workDir, { recursive: true });
     const { renderMedia, selectComposition } = await import('@remotion/renderer');
+    const browserExecutable = await getServerlessBrowserExecutable();
     const serveUrl = await getBundle();
     const composition = await selectComposition({
       serveUrl,
       id: 'StoryMotionVideo',
       inputProps,
+      browserExecutable,
+      chromiumOptions: browserExecutable
+        ? {
+            gl: 'swangle',
+            enableMultiProcessOnLinux: true
+          }
+        : undefined,
       timeoutInMilliseconds: 120000
     });
 
@@ -319,6 +338,13 @@ export async function POST(request: Request) {
       audioCodec: 'aac',
       crf: 18,
       concurrency: 2,
+      browserExecutable,
+      chromiumOptions: browserExecutable
+        ? {
+            gl: 'swangle',
+            enableMultiProcessOnLinux: true
+          }
+        : undefined,
       timeoutInMilliseconds: 180000,
       logLevel: 'warn',
       onProgress: () => undefined

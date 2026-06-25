@@ -2,6 +2,9 @@
   "name": "storymotion-ai",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=20.11.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -13,6 +16,7 @@
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@remotion/bundler": "^4.0.482",
     "@remotion/renderer": "^4.0.320",
+    "@sparticuz/chromium": "^147.0.0",
     "@vercel/blob": "^2.4.1",
     "autoprefixer": "^10.4.21",
     "exifr": "^7.1.3",
