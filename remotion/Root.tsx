@@ -1,5 +1,6 @@
 import React from 'react';
 import { Composition } from 'remotion';
+import { registerRoot } from 'remotion';
 import { StoryMotionVideo } from './StoryMotionVideo';
 import type { RemotionRenderProps } from '../lib/render-types';
 
@@ -73,3 +74,5 @@ export const RemotionRoot = () => (
     }}
   />
 );
+
+registerRoot(RemotionRoot);

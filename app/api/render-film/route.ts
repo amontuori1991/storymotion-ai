@@ -148,6 +148,9 @@ const renderSchema = z.object({
 
 let bundledServeUrl: Promise<string> | null = null;
 
+const remotionDir = path.join(process.cwd(), 'remotion');
+const remotionRootEntry = path.join(remotionDir, 'Root.tsx');
+
 function sanitizeFilename(name: string) {
   const cleaned = name.replace(/[^a-z0-9-_ ]/gi, '').trim().replace(/\s+/g, '-').toLowerCase();
   return cleaned || 'storymotion-ai';
@@ -213,8 +216,20 @@ async function createQrCodeDataUrl(url: string | undefined, enabled: boolean) {
 async function getBundle() {
   if (!bundledServeUrl) {
     const { bundle } = await import('@remotion/bundler');
+    const rootExists = existsSync(remotionRootEntry);
+    const remotionDirExists = existsSync(remotionDir);
+    console.info('[StoryMotion render] Remotion diagnostics', {
+      cwd: process.cwd(),
+      remotionDir,
+      remotionDirExists,
+      remotionRootEntry,
+      remotionRootExists: rootExists
+    });
+    if (!rootExists) {
+      throw new Error(`Remotion Root.tsx non trovato nel bundle server: ${remotionRootEntry}`);
+    }
     bundledServeUrl = bundle({
-      entryPoint: path.join(process.cwd(), 'remotion', 'index.ts'),
+      entryPoint: remotionRootEntry,
       onProgress: () => undefined,
       publicDir: path.join(process.cwd(), 'public'),
       enableCaching: true,
