@@ -342,7 +342,9 @@ export async function POST(request: Request) {
       pixelFormat: 'yuv420p',
       audioCodec: 'aac',
       crf: 18,
-      concurrency: 2,
+      concurrency: process.env.VERCEL
+  ? 1
+  : Math.max(1, require("os").cpus().length - 1),
       browserExecutable,
       chromiumOptions: browserExecutable
         ? {
