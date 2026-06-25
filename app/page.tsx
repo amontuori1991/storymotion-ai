@@ -221,6 +221,7 @@ export default function Home() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isRendering, setIsRendering] = useState(false);
   const [renderProgress, setRenderProgress] = useState(0);
+  const [renderPhaseMessage, setRenderPhaseMessage] = useState('');
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [downloadName, setDownloadName] = useState('storymotion-ai.mp4');
   const [filename, setFilename] = useState('storymotion-ai');
@@ -605,11 +606,8 @@ export default function Home() {
 
     setIsRendering(true);
     setRenderProgress(3);
+    setRenderPhaseMessage('Preparazione immagini...');
     setError(null);
-
-    const progressTimer = window.setInterval(() => {
-      setRenderProgress((current) => Math.min(92, current + Math.max(1, Math.round((92 - current) * 0.12))));
-    }, 900);
 
     try {
       const renderMaxSize = exportMode === 'fair-tablet' ? 1600 : 1920;
@@ -655,24 +653,65 @@ export default function Home() {
         })
       });
 
-      if (!response.ok) {
+      if (!response.ok || !response.body) {
         const details = (await response.json().catch(() => null)) as { error?: string; details?: string } | null;
         throw new Error(details?.details ? `${details.error} ${details.details}` : details?.error ?? 'Rendering fallito');
       }
 
-      const blob = await response.blob();
-      if (downloadUrl) URL.revokeObjectURL(downloadUrl);
-      const objectUrl = URL.createObjectURL(blob);
-      const disposition = response.headers.get('content-disposition');
-      const match = disposition?.match(/filename="([^"]+)"/);
-      setDownloadName(match?.[1] ?? `${filename || 'storymotion-ai'}.mp4`);
-      setDownloadUrl(objectUrl);
-      setRenderProgress(100);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
+        for (const part of parts) {
+          let eventType = 'message';
+          let data = '';
+          for (const line of part.split('\n')) {
+            if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+            if (line.startsWith('data: ')) data = line.slice(6).trim();
+          }
+          if (!data) continue;
+          try {
+            const eventData = JSON.parse(data) as {
+              phase?: string;
+              progress?: number;
+              message?: string;
+              url?: string;
+              filename?: string;
+            };
+            if (eventType === 'progress') {
+              if (eventData.progress !== undefined) setRenderProgress(eventData.progress);
+              if (eventData.message) setRenderPhaseMessage(eventData.message);
+            } else if (eventType === 'done') {
+              setRenderPhaseMessage('Download video...');
+              setRenderProgress(98);
+              const videoRes = await fetch(eventData.url!);
+              const videoBlob = await videoRes.blob();
+              if (downloadUrl?.startsWith('blob:')) URL.revokeObjectURL(downloadUrl);
+              setDownloadUrl(URL.createObjectURL(videoBlob));
+              setDownloadName(eventData.filename ?? `${filename || 'storymotion-ai'}.mp4`);
+              setRenderProgress(100);
+              setRenderPhaseMessage('');
+              break outer;
+            } else if (eventType === 'error') {
+              throw new Error(eventData.message ?? 'Rendering fallito');
+            }
+          } catch (parseError) {
+            if (parseError instanceof SyntaxError) continue;
+            throw parseError;
+          }
+        }
+      }
     } catch (renderError) {
       setRenderProgress(0);
+      setRenderPhaseMessage('');
       setError(renderError instanceof Error ? renderError.message : 'Rendering reale non disponibile. Configurare Remotion/FFmpeg.');
     } finally {
-      window.clearInterval(progressTimer);
       setIsRendering(false);
     }
   }
@@ -1113,7 +1152,7 @@ export default function Home() {
             {(isRendering || renderProgress > 0) && (
               <div className="mt-3">
                 <div className="mb-1 flex justify-between text-xs text-white/45">
-                  <span>{isRendering ? 'Generazione MP4 reale in corso' : 'Render completato'}</span>
+                  <span>{renderPhaseMessage || (isRendering ? 'Generazione MP4 reale in corso' : 'Render completato')}</span>
                   <span>{renderProgress}%</span>
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-white/10">

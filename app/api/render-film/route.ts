@@ -1,10 +1,11 @@
+import { cpus, tmpdir } from 'os';
 import { existsSync } from 'fs';
 import { mkdir, readFile, rm } from 'fs/promises';
-import { tmpdir } from 'os';
 import path from 'path';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import type { RemotionRenderProps } from '@/lib/render-types';
+import { putPersistentAsset } from '@/lib/storage';
 
 export const runtime = 'nodejs';
 export const maxDuration = 900;
@@ -266,6 +267,12 @@ function renderingUnavailable(message?: string) {
   );
 }
 
+const encoder = new TextEncoder();
+
+function sseEvent(event: string, data: object): Uint8Array {
+  return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
 export async function POST(request: Request) {
   const ffmpegModule = await import('@ffmpeg-installer/ffmpeg');
   const ffmpegPath = ffmpegModule.default?.path ?? ffmpegModule.path;
@@ -310,67 +317,101 @@ export async function POST(request: Request) {
     height
   };
 
-  const workDir = path.join(tmpdir(), `storymotion-${crypto.randomUUID()}`);
-  const outputLocation = path.join(workDir, `${sanitizeFilename(payload.filename)}.mp4`);
+  const filename = `${sanitizeFilename(payload.filename)}.mp4`;
 
-  try {
-    await mkdir(workDir, { recursive: true });
-    const { renderMedia, selectComposition } = await import('@remotion/renderer');
-    const browserExecutable = await getServerlessBrowserExecutable();
-    const serveUrl = await getBundle();
-    const composition = await selectComposition({
-      serveUrl,
-      id: 'StoryMotionVideo',
-      inputProps,
-      browserExecutable,
-      chromiumOptions: browserExecutable
-        ? {
-            gl: 'swangle',
-            enableMultiProcessOnLinux: true
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const workDir = path.join(tmpdir(), `storymotion-${crypto.randomUUID()}`);
+      const outputLocation = path.join(workDir, filename);
+
+      try {
+        await mkdir(workDir, { recursive: true });
+
+        controller.enqueue(sseEvent('progress', { phase: 'bundling', progress: 5, message: 'Compilazione bundle Remotion...' }));
+
+        const { renderMedia, selectComposition } = await import('@remotion/renderer');
+        const browserExecutable = await getServerlessBrowserExecutable();
+        const serveUrl = await getBundle();
+
+        controller.enqueue(sseEvent('progress', { phase: 'composition', progress: 15, message: 'Avvio Chromium e selezione composizione...' }));
+
+        const composition = await selectComposition({
+          serveUrl,
+          id: 'StoryMotionVideo',
+          inputProps,
+          browserExecutable,
+          chromiumOptions: browserExecutable
+            ? {
+                gl: 'swangle',
+                enableMultiProcessOnLinux: true
+              }
+            : undefined,
+          timeoutInMilliseconds: 120000
+        });
+
+        controller.enqueue(sseEvent('progress', { phase: 'rendering', progress: 22, message: 'Avvio rendering frame...' }));
+
+        let lastPct = -1;
+        await renderMedia({
+          composition,
+          serveUrl,
+          codec: 'h264',
+          outputLocation,
+          inputProps,
+          overwrite: true,
+          pixelFormat: 'yuv420p',
+          audioCodec: 'aac',
+          crf: 23,
+          concurrency: process.env.VERCEL ? 1 : Math.max(1, cpus().length - 1),
+          browserExecutable,
+          chromiumOptions: browserExecutable
+            ? {
+                gl: 'swangle',
+                enableMultiProcessOnLinux: true
+              }
+            : undefined,
+          timeoutInMilliseconds: 180000,
+          logLevel: 'warn',
+          onProgress: (info) => {
+            const pct = Math.round((info.progress ?? 0) * 100);
+            if (pct === lastPct) return;
+            lastPct = pct;
+            const mapped = 22 + Math.round((info.progress ?? 0) * 66);
+            controller.enqueue(
+              sseEvent('progress', {
+                phase: 'rendering',
+                progress: mapped,
+                message: `Rendering frame... ${pct}%`
+              })
+            );
           }
-        : undefined,
-      timeoutInMilliseconds: 120000
-    });
+        });
 
-    await renderMedia({
-      composition,
-      serveUrl,
-      codec: 'h264',
-      outputLocation,
-      inputProps,
-      overwrite: true,
-      pixelFormat: 'yuv420p',
-      audioCodec: 'aac',
-      crf: 18,
-      concurrency: process.env.VERCEL
-  ? 1
-  : Math.max(1, require("os").cpus().length - 1),
-      browserExecutable,
-      chromiumOptions: browserExecutable
-        ? {
-            gl: 'swangle',
-            enableMultiProcessOnLinux: true
-          }
-        : undefined,
-      timeoutInMilliseconds: 180000,
-      logLevel: 'warn',
-      onProgress: () => undefined
-    });
+        controller.enqueue(sseEvent('progress', { phase: 'uploading', progress: 90, message: 'Salvataggio video su storage...' }));
 
-    const file = await readFile(outputLocation);
-    const filename = `${sanitizeFilename(payload.filename)}.mp4`;
+        const file = await readFile(outputLocation);
+        const { url } = await putPersistentAsset(filename, file, 'video/mp4');
 
-    return new NextResponse(file, {
-      headers: {
-        'Content-Type': 'video/mp4',
-        'Content-Length': String(file.length),
-        'Content-Disposition': `attachment; filename="${filename}"`,
-        'Cache-Control': 'no-store'
+        controller.enqueue(sseEvent('done', { url, filename }));
+        controller.close();
+      } catch (error) {
+        try {
+          controller.enqueue(sseEvent('error', { message: error instanceof Error ? error.message : String(error) }));
+          controller.close();
+        } catch {
+          // stream già chiuso
+        }
+      } finally {
+        await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
       }
-    });
-  } catch (error) {
-    return renderingUnavailable(error instanceof Error ? error.message : String(error));
-  } finally {
-    await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
-  }
+    }
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no'
+    }
+  });
 }
