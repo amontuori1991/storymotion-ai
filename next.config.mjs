@@ -5,9 +5,12 @@ const nextConfig = {
     '/api/render-film': [
       './remotion/**/*',
       './lib/render-types.ts',
-      './node_modules/@remotion/compositor-*/*',
-      './node_modules/@remotion/renderer/**/*',
-      './node_modules/@ffmpeg-installer/**/*'
+      './node_modules/@remotion/compositor-linux-x64-gnu/remotion',
+      './node_modules/@remotion/compositor-linux-x64-gnu/package.json',
+      './node_modules/@ffmpeg-installer/ffmpeg/index.js',
+      './node_modules/@ffmpeg-installer/ffmpeg/package.json',
+      './node_modules/@ffmpeg-installer/linux-x64/ffmpeg',
+      './node_modules/@ffmpeg-installer/linux-x64/package.json'
     ]
   },
   experimental: {
