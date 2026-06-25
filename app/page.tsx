@@ -66,6 +66,31 @@ async function compressImage(file: File, maxSize = 1920, quality = 0.82): Promis
   return new File([blob], file.name.replace(/\.(png|jpe?g)$/i, '.jpg'), { type: 'image/jpeg' });
 }
 
+async function imageToPayloadDataUrl(file: File, maxSize: number, quality: number): Promise<string> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxSize / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Canvas non disponibile');
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+    if (!blob) throw new Error('Compressione immagine non riuscita');
+    return fileToDataUrl(new File([blob], file.name.replace(/\.(heic|heif|png|jpe?g)$/i, '.jpg'), { type: 'image/jpeg' }));
+  } catch {
+    if (file.size <= 750_000) return fileToDataUrl(file);
+    throw new Error(`Immagine troppo pesante o non leggibile: ${file.name}. Converti in JPG/PNG o deselezionala prima del render.`);
+  }
+}
+
+type ImagePayload = {
+  name: string;
+  type: string;
+  dataUrl: string;
+};
+
 function limitWords(text: string, maxWords: number) {
   const words = text.trim().split(/\s+/).filter(Boolean);
   return words.length <= maxWords ? text : words.slice(0, maxWords).join(' ');
@@ -209,7 +234,8 @@ export default function Home() {
     () => [...(websiteImport?.slides ?? []), ...(reviewsImport?.slides ?? [])].filter((slide) => slide.approved),
     [websiteImport, reviewsImport]
   );
-  const canGenerate = photos.length > 0 || approvedContentSlides.length > 0 || contentMode === 'site-only';
+  const selectedPhotos = useMemo(() => photos.filter((photo) => photo.selected !== false), [photos]);
+  const canGenerate = selectedPhotos.length > 0 || approvedContentSlides.length > 0 || contentMode === 'site-only';
 
   useEffect(() => {
     const raw = window.localStorage.getItem(brandKitStorageKey);
@@ -255,7 +281,8 @@ export default function Home() {
           type: optimizedFile.type || 'image/*',
           size: optimizedFile.size,
           previewUrl: URL.createObjectURL(optimizedFile),
-          takenAt
+          takenAt,
+          selected: true
         };
       })
     );
@@ -278,6 +305,28 @@ export default function Home() {
       [next[index], next[target]] = [next[target], next[index]];
       return next;
     });
+  }
+
+  function removePhoto(id: string) {
+    setPhotos((current) => {
+      const removed = current.find((photo) => photo.id === id);
+      if (removed) URL.revokeObjectURL(removed.previewUrl);
+      return current.filter((photo) => photo.id !== id);
+    });
+    setDownloadUrl(null);
+    setRenderProgress(0);
+  }
+
+  function togglePhotoSelection(id: string) {
+    setPhotos((current) => current.map((photo) => (photo.id === id ? { ...photo, selected: !photo.selected } : photo)));
+    setDownloadUrl(null);
+    setRenderProgress(0);
+  }
+
+  function setAllPhotoSelection(selected: boolean) {
+    setPhotos((current) => current.map((photo) => ({ ...photo, selected })));
+    setDownloadUrl(null);
+    setRenderProgress(0);
   }
 
   function updateSelectedBrandKit(updater: (kit: BrandKit) => BrandKit) {
@@ -430,13 +479,24 @@ export default function Home() {
       const nextExportSettings = overrides?.exportSettings ?? exportSettings;
       const nextExportMode = overrides?.exportMode ?? exportMode;
       const nextFinalCta = overrides?.finalCta ?? finalCta;
-      const images = await Promise.all(
-        (contentMode === 'site-only' ? [] : photos).slice(0, 20).map(async (photo) => ({
-          name: photo.name,
-          type: photo.type,
-          dataUrl: await fileToDataUrl(photo.file)
-        }))
+      const imageResults = await Promise.all(
+        (contentMode === 'site-only' ? [] : selectedPhotos).slice(0, 12).map(async (photo) => {
+          try {
+            return {
+              name: photo.name,
+              type: 'image/jpeg',
+              dataUrl: await imageToPayloadDataUrl(photo.file, 720, 0.68)
+            };
+          } catch {
+            return null;
+          }
+        })
       );
+      const images = imageResults.filter((image): image is ImagePayload => Boolean(image));
+
+      if (selectedPhotos.length > 0 && images.length === 0 && contentMode !== 'site-only') {
+        throw new Error('Le immagini selezionate non possono essere lette dal browser. Prova a convertirle in JPG/PNG o deseleziona i file non supportati.');
+      }
 
       const response = await fetch('/api/generate-film', {
         method: 'POST',
@@ -499,14 +559,14 @@ export default function Home() {
     setDownloadUrl(null);
     setRenderProgress(0);
 
-    if (photos.length > 0) {
+    if (selectedPhotos.length > 0) {
       void generateFilm({
         templateId: 'tradefair',
         music: nextMusic,
         presetSettings: { ...tradeFairSettings, sceneDuration: 2.4, transitionStyle: 'Smooth Zoom', colorPalette: 'High Contrast' },
         exportSettings: nextExport,
         exportMode: 'fair-tablet',
-        finalCta
+        finalCta: 'PRENOTA ORA'
       });
     }
   }
@@ -552,12 +612,28 @@ export default function Home() {
     }, 900);
 
     try {
+      const renderMaxSize = exportMode === 'fair-tablet' ? 1600 : 1920;
+      const renderQuality = exportMode === 'fair-tablet' ? 0.76 : 0.82;
       const images = await Promise.all(
-        (contentMode === 'site-only' ? [] : photos).slice(0, 60).map(async (photo) => ({
-          name: photo.name,
-          type: photo.type,
-          dataUrl: await fileToDataUrl(photo.file)
-        }))
+        (contentMode === 'site-only' ? [] : selectedPhotos).slice(0, 60).map(async (photo, index) => {
+          const dataUrl = await imageToPayloadDataUrl(photo.file, renderMaxSize, renderQuality);
+          const uploadResponse = await fetch('/api/storage/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              filename: `render-${index + 1}-${photo.name.replace(/\.(heic|heif|png|jpe?g)$/i, '.jpg')}`,
+              contentType: 'image/jpeg',
+              dataUrl
+            })
+          });
+          const upload = (await uploadResponse.json().catch(() => null)) as { url?: string; error?: string; message?: string } | null;
+          if (!uploadResponse.ok || !upload?.url) throw new Error(upload?.error ?? upload?.message ?? 'Upload immagine non riuscito');
+          return {
+            name: photo.name,
+            type: 'image/jpeg',
+            dataUrl: upload.url
+          };
+        })
       );
 
       const response = await fetch('/api/render-film', {
@@ -662,27 +738,50 @@ export default function Home() {
             </motion.div>
 
             <section className="glass rounded-lg p-4 sm:p-5">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold">Sequenza immagini</h2>
-                <span className="text-sm text-white/55">{photos.length}/{MAX_IMAGES}</span>
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold">Sequenza immagini</h2>
+                  <p className="text-sm text-white/50">{selectedPhotos.length} selezionate su {photos.length}/{MAX_IMAGES}</p>
+                </div>
+                {photos.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    <button className="focus-ring h-9 rounded-md bg-white/8 px-3 text-xs font-medium hover:bg-white/14" onClick={() => setAllPhotoSelection(true)}>
+                      Seleziona tutte
+                    </button>
+                    <button className="focus-ring h-9 rounded-md bg-white/8 px-3 text-xs font-medium hover:bg-white/14" onClick={() => setAllPhotoSelection(false)}>
+                      Deseleziona tutte
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="grid max-h-[34rem] grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3 xl:grid-cols-4">
                 {photos.map((photo, index) => (
-                  <div key={photo.id} className="rounded-lg border border-white/10 bg-white/[0.04] p-2">
+                  <div key={photo.id} className={`rounded-lg border bg-white/[0.04] p-2 transition ${photo.selected ? 'border-white/10' : 'border-white/5 opacity-45'}`}>
                     <div className="relative aspect-[4/3] overflow-hidden rounded-md bg-black">
                       <img alt="" className="h-full w-full object-cover" src={photo.previewUrl} />
                       <span className="absolute left-2 top-2 rounded bg-black/70 px-2 py-1 text-xs">{index + 1}</span>
+                      {!photo.selected && <span className="absolute bottom-2 left-2 rounded bg-black/75 px-2 py-1 text-xs text-white/75">Esclusa</span>}
                     </div>
                     <div className="mt-2 min-w-0">
                       <p className="truncate text-sm font-medium">{photo.name}</p>
                       <p className="text-xs text-white/45">{photo.takenAt ? new Date(photo.takenAt).toLocaleDateString('it-IT') : formatSize(photo.size)}</p>
                     </div>
-                    <div className="mt-2 flex gap-2">
-                      <button className="focus-ring grid h-8 flex-1 place-items-center rounded bg-white/8 hover:bg-white/14" onClick={() => movePhoto(index, -1)} aria-label="Sposta su">
+                    <div className="mt-2 grid grid-cols-4 gap-2">
+                      <button className="focus-ring grid h-8 place-items-center rounded bg-white/8 hover:bg-white/14" onClick={() => movePhoto(index, -1)} aria-label="Sposta su">
                         <ArrowUp className="h-4 w-4" />
                       </button>
-                      <button className="focus-ring grid h-8 flex-1 place-items-center rounded bg-white/8 hover:bg-white/14" onClick={() => movePhoto(index, 1)} aria-label="Sposta giu">
+                      <button className="focus-ring grid h-8 place-items-center rounded bg-white/8 hover:bg-white/14" onClick={() => movePhoto(index, 1)} aria-label="Sposta giu">
                         <ArrowDown className="h-4 w-4" />
+                      </button>
+                      <button
+                        className={`focus-ring grid h-8 place-items-center rounded text-xs font-semibold ${photo.selected ? 'bg-electric text-white hover:bg-blue-400' : 'bg-white/8 text-white/65 hover:bg-white/14'}`}
+                        onClick={() => togglePhotoSelection(photo.id)}
+                        aria-label={photo.selected ? 'Deseleziona foto' : 'Seleziona foto'}
+                      >
+                        Usa
+                      </button>
+                      <button className="focus-ring grid h-8 place-items-center rounded bg-red-500/15 text-red-100 hover:bg-red-500/25" onClick={() => removePhoto(photo.id)} aria-label="Rimuovi foto">
+                        <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
                   </div>

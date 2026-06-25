@@ -18,6 +18,7 @@ export type UploadedPhoto = {
   size: number;
   previewUrl: string;
   takenAt: string | null;
+  selected: boolean;
 };
 
 export type MusicSettings = {

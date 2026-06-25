@@ -16,7 +16,7 @@ const renderSchema = z.object({
       z.object({
         name: z.string(),
         type: z.string(),
-        dataUrl: z.string().startsWith('data:image/')
+        dataUrl: z.string().min(1)
       })
     )
     .min(0)
