@@ -273,6 +273,64 @@ function sseEvent(event: string, data: object): Uint8Array {
   return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
+// 1×1 transparent PNG — placeholder per immagini che non riescono a caricarsi
+const PLACEHOLDER_DATA_URL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+async function fetchImageAsDataUrl(url: string): Promise<string> {
+  if (url.startsWith('data:')) return url;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  const mimeType = (res.headers.get('content-type') ?? 'image/jpeg').split(';')[0].trim();
+  const buffer = Buffer.from(await res.arrayBuffer());
+  return `data:${mimeType};base64,${buffer.toString('base64')}`;
+}
+
+// Pool di concorrenza: avvia fino a `concurrency` worker in parallelo, ognuno
+// consuma elementi dalla coda finché non è vuota, preservando l'ordine del risultato.
+async function withConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < items.length) {
+      const i = cursor++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
+}
+
+// Risolve tutti gli HTTP URL delle immagini in data URL base64 server-side.
+// Cache per-request: la stessa URL viene scaricata una sola volta.
+// In caso di errore su una singola immagine: logga e usa il placeholder, non interrompe.
+async function resolveImages(
+  images: Array<{ name: string; type: string; dataUrl: string }>
+): Promise<Array<{ name: string; type: string; dataUrl: string }>> {
+  if (images.length === 0) return images;
+  const cache = new Map<string, string>();
+  return withConcurrency(images, 5, async (img) => {
+    const url = img.dataUrl;
+    if (cache.has(url)) return { ...img, dataUrl: cache.get(url)! };
+    try {
+      const dataUrl = await fetchImageAsDataUrl(url);
+      cache.set(url, dataUrl);
+      return { ...img, dataUrl };
+    } catch (err) {
+      console.warn(
+        `[StoryMotion render] Immagine non caricata "${img.name}" (${url.slice(0, 120)}):`,
+        err instanceof Error ? err.message : err
+      );
+      cache.set(url, PLACEHOLDER_DATA_URL);
+      return { ...img, dataUrl: PLACEHOLDER_DATA_URL };
+    }
+  });
+}
+
 export async function POST(request: Request) {
   const ffmpegModule = await import('@ffmpeg-installer/ffmpeg');
   const ffmpegPath = ffmpegModule.default?.path ?? ffmpegModule.path;
@@ -327,18 +385,26 @@ export async function POST(request: Request) {
       try {
         await mkdir(workDir, { recursive: true });
 
-        controller.enqueue(sseEvent('progress', { phase: 'bundling', progress: 5, message: 'Compilazione bundle Remotion...' }));
+        // Risolvi tutti gli HTTP URL in data URL base64 prima di passare a Chromium.
+        // Chromium non ha accesso garantito a localhost né a URL remoti dall'interno
+        // del suo processo sandbox — i data URL eliminano qualsiasi dipendenza di rete.
+        controller.enqueue(sseEvent('progress', { phase: 'resolving', progress: 3, message: 'Caricamento immagini dal storage...' }));
+
+        const resolvedImages = await resolveImages(inputProps.images);
+        const resolvedInputProps: RemotionRenderProps = { ...inputProps, images: resolvedImages };
+
+        controller.enqueue(sseEvent('progress', { phase: 'bundling', progress: 8, message: 'Compilazione bundle Remotion...' }));
 
         const { renderMedia, selectComposition } = await import('@remotion/renderer');
         const browserExecutable = await getServerlessBrowserExecutable();
         const serveUrl = await getBundle();
 
-        controller.enqueue(sseEvent('progress', { phase: 'composition', progress: 15, message: 'Avvio Chromium e selezione composizione...' }));
+        controller.enqueue(sseEvent('progress', { phase: 'composition', progress: 18, message: 'Avvio Chromium e selezione composizione...' }));
 
         const composition = await selectComposition({
           serveUrl,
           id: 'StoryMotionVideo',
-          inputProps,
+          inputProps: resolvedInputProps,
           browserExecutable,
           chromiumOptions: browserExecutable
             ? {
@@ -357,7 +423,7 @@ export async function POST(request: Request) {
           serveUrl,
           codec: 'h264',
           outputLocation,
-          inputProps,
+          inputProps: resolvedInputProps,
           overwrite: true,
           pixelFormat: 'yuv420p',
           audioCodec: 'aac',
