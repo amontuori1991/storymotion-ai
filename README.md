@@ -97,3 +97,7 @@ Se la chiave manca, l’app mostra:
 - offerte / promo
 
 Le slide estratte sono sempre approvabili e modificabili prima del render.
+
+## Deploy Trigger
+
+Trigger Vercel deploy.
